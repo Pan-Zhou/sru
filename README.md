@@ -80,4 +80,4 @@ https://github.com/taolei87/sru/graphs/contributors
   - [ ] ReLU activation
   - [ ] support multi-GPU (context change)
   - [ ] Layer normalization + residual to compare with highway connection (current version)
-  
+ This is for testing... 
