@@ -13,7 +13,10 @@ from torch.autograd import Variable
 
 import cuda_functional as MF
 
-
+from io_func.kaldi_feat import KaldiReadIn
+from io_func import smart_open, preprocess_feature_and_label, shuffle_feature_and_label, make_context, skip_frame
+from io_func.kaldi_io_parallel import KaldiDataReadParallel
+#####
 def read_corpus(path, eos="</s>"):
     data = [ ]
     with open(path) as fin:
