@@ -4,6 +4,7 @@ import argparse
 import time
 import random
 import math
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -16,9 +17,11 @@ import cuda_functional as MF
 from io_func.kaldi_feat import KaldiReadIn
 from io_func import smart_open, preprocess_feature_and_label, shuffle_feature_and_label, make_context, skip_frame
 from io_func.kaldi_io_parallel import KaldiDataReadParallel
+
+import pdb
 #####
 class Model(nn.Module):
-    def __init__(self, words, args):
+    def __init__(self, args):
         super(Model, self).__init__()
         self.args = args
         self.n_d = args.feadim
@@ -53,8 +56,7 @@ class Model(nn.Module):
                 p.data.zero_()
 
     def forward(self, x, hidden,lens):
-        #emb = self.drop(self.embedding_layer(x))
-        x=pack_padded_sequence(x,lens)
+        x=pack_padded_sequence(x,lens,batch_first=True)
         rnnout, hidden = self.rnn(x, hidden)
         #output,_ = pad_packed_sequence(output)
         output = self.drop(rnnout.data)
@@ -92,17 +94,19 @@ def train_model(epoch, model, train_reader):
     i=0
     while True:
         feat,label,length = train_reader.load_next_nstreams()
-        if length is None or label.shape[1]<args.batch_size:
+        if length is None or label.shape[0]<args.batch_size:
             break
         else:
-            x, y =  Variable(feat), Variable(label)
+            #print label.shape
+            x, y =  Variable(torch.from_numpy(feat)).cuda(), Variable(torch.from_numpy(label).long()).cuda()
             hidden = (Variable(hidden[0].data), Variable(hidden[1].data)) if args.lstm \
                 else Variable(hidden.data)
 
             model.zero_grad()
             output, hidden = model(x, hidden,length)
-            assert x.size(1) == batch_size
-            loss = criterion(output, y) / x.size(1)
+            assert x.size(0) == batch_size
+            y=pack_padded_sequence(y,length,batch_first=True)
+            loss = criterion(output, y.data) / x.size(0)
             loss.backward()
 
             torch.nn.utils.clip_grad_norm(model.parameters(), args.clip_grad)
@@ -116,13 +120,13 @@ def train_model(epoch, model, train_reader):
                 sys.exit(0)
                 return
 
-            total_loss += loss.data[0] / x.size(0)
+            total_loss += loss.data[0] / x.size(1)
             i+=1
             if i%10 == 0:
-                sys.stdout.write("Epoch={},batch={},loss={:.4f}".format(epoch,i,total_loss/i))
+                sys.stdout.write("time:{}, Epoch={},batch={},loss={:.4f}\n".format(datetime.now(),epoch,i,total_loss/i))
                 sys.stdout.flush()
 
-    return (total_loss/N)
+    return (total_loss/i)
 
 def eval_model(model, valid_reader):
     model.eval()
@@ -135,26 +139,27 @@ def eval_model(model, valid_reader):
     i=0
     while True:
         feat,label,length = valid_reader.load_next_nstreams()
-        if length is None or label.shape[1]<args.batch_size:
+        if length is None or label.shape[0]<args.batch_size:
             break
         else:
-            x, y = Variable(feat, volatile=True), Variable(label)
+            x, y = Variable(torch.from_numpy(feat), volatile=True).cuda(), Variable(torch.from_numpy(label).long()).cuda()
             hidden = (Variable(hidden[0].data), Variable(hidden[1].data)) if args.lstm \
                 else Variable(hidden.data)
             output, hidden = model(x, hidden)
-            loss = criterion(output, y) / x.size(1)
+            y=pack_padded_sequence(y,length,batch_first=True)
+            loss = criterion(output, y) / x.size(0)
             total_loss += loss.data[0]
-    avg_loss = total_loss / valid[1].numel()
-    ppl = (avg_loss)
-    return ppl
+            i+=1
+    avg_loss = total_loss / i
+    return avg_loss
 
 def main(args):
-    train_read_opt={'label':args.trainlab,'lcxt':args.lcxt,'rcxt':args.rcxt,'num_streams':args.batch_size,'skip_frame':args.skipframe}
-    dev_read_opt={'label':args.devlab,'lcxt':args.lcxt,'rcxt':args.rcxt,'num_streams':args.batch_size,'skip_frame':args.skipframe}
+    train_read_opts={'label':args.trainlab,'lcxt':args.lcxt,'rcxt':args.rcxt,'num_streams':args.batch_size,'skip_frame':args.skipframe}
+    dev_read_opts={'label':args.devlab,'lcxt':args.lcxt,'rcxt':args.rcxt,'num_streams':args.batch_size,'skip_frame':args.skipframe}
 
     kaldi_io_tr=KaldiDataReadParallel(args.train,train_read_opts)
     kaldi_io_dev=KaldiDataReadParallel(args.dev,dev_read_opts)
-    model = Model(train, args)
+    model = Model(args)
     model.cuda()
     sys.stdout.write("num of parameters: {}\n".format(
         sum(x.numel() for x in model.parameters() if x.requires_grad)
@@ -164,13 +169,14 @@ def main(args):
 
     unchanged = 0
     best_dev = 1e+8
+    #pdb.set_trace()
     for epoch in range(args.max_epoch):
         start_time = time.time()
         if args.lr_decay_epoch>0 and epoch>=args.lr_decay_epoch:
             args.lr *= args.lr_decay
-        train_loss = train_model(epoch, model, train)
-        dev_loss = eval_model(model, dev)
-        sys.stdout.write("\rEpoch={}  lr={:.4f}  train_loss={:.4f}  dev_loss={:.4f}"
+        train_loss = train_model(epoch, model, kaldi_io_tr)
+        dev_loss = eval_model(model, kaldi_io_dev)
+        sys.stdout.write("Epoch={}  lr={:.4f}  train_loss={:.4f}  dev_loss={:.4f}"
                 "\t[{:.4f}m]\n".format(
             epoch,
             args.lr,
