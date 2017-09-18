@@ -52,13 +52,13 @@ class Model(nn.Module):
             else:
                 p.data.zero_()
 
-    def forward(self, x, hidden):
+    def forward(self, x, hidden,lens):
         #emb = self.drop(self.embedding_layer(x))
         x=pack_padded_sequence(x,lens)
-        output, hidden = self.rnn(x, hidden)
-        output,_ = pad_packed_sequence(output)
-        output = self.drop(output)
-        output = output.view(-1, output.size(2))
+        rnnout, hidden = self.rnn(x, hidden)
+        #output,_ = pad_packed_sequence(output)
+        output = self.drop(rnnout.data)
+        #output = output.view(-1, output.size(2))
         output = self.output_layer(output)
         return output, hidden
 
@@ -100,7 +100,7 @@ def train_model(epoch, model, train_reader):
                 else Variable(hidden.data)
 
             model.zero_grad()
-            output, hidden = model(x, hidden)
+            output, hidden = model(x, hidden,length)
             assert x.size(1) == batch_size
             loss = criterion(output, y) / x.size(1)
             loss.backward()

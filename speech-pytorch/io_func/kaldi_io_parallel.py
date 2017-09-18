@@ -152,6 +152,10 @@ class KaldiDataReadParallel(object):
                 max_frame_num = length[nstreams]
             nstreams += 1
 
+        #sort in decrease order
+        feat_mat.sort(key=lambda x:x.size,reverse=True)
+        length.sort(reverse=True)
+        label.sort(key=lambda x:x.size,reverse=True)
         # zero fill
         i = 0
         while i < nstreams:
